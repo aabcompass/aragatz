@@ -1,0 +1,6 @@
+[submodule "ip_repo/camera_capture"]
+	path = ip_repo/camera_capture
+	url = git@github.com:aabcompass/camera_capture.git
+[submodule "ip_repo/camera_test_gen"]
+	path = ip_repo/camera_test_gen
+	url = git@github.com:aabcompass/camera_test_gen.git

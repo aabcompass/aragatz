@@ -1,0 +1,42 @@
+cat > .gitignore <<'EOF'
+# Vivado temporary files
+.Xil/
+**/.Xil/
+
+*.jou
+*.log
+*.str
+
+# Vivado generated project data
+*.cache/
+*.gen/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.srcs/
+
+# Generated project file
+*.xpr
+
+# Synthesis and implementation products
+*.dcp
+*.bit
+*.bin
+*.ltx
+*.wdb
+*.xsa
+
+# Local reports and builds
+build/
+reports/
+
+# Editors
+*~
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.pyc
+EOF
