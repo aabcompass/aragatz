@@ -6,6 +6,11 @@ set script_dir [file dirname [file normalize [info script]]]
 set root [file normalize [file join $script_dir ..]]
 set build_dir [file join $root build aragatz_git_check]
 
+# Optional build location. Never overwrite an earlier Vivado project.
+if {[info exists ::env(ARAGATZ_BUILD_DIR)] && $::env(ARAGATZ_BUILD_DIR) ne ""} {
+    set build_dir [file normalize $::env(ARAGATZ_BUILD_DIR)]
+}
+
 # Safety: never overwrite an existing project.
 if {[llength [get_projects -quiet]] != 0} {
     error "Close the current Vivado project first"
@@ -73,6 +78,42 @@ if {[llength $bd] != 1} {
 }
 
 open_bd_design $bd
+
+# Apply the known-good Zynq-7000 PS preset (DDR, MIO, peripheral clocks).
+# The preset defines procs; 'source' alone does NOT apply its settings.
+set preset_file [file join $script_dir zynq_ps_config.tcl]
+if {![file isfile $preset_file]} {
+    error "Missing required PS7 preset: $preset_file"
+}
+namespace eval ::aragatz_ps7_preset [list source $preset_file]
+set ps [get_bd_cells -quiet processing_system7_0]
+if {[llength $ps] != 1} {
+    error "PS7 cell processing_system7_0 not found"
+}
+set meta [::aragatz_ps7_preset::getPresetInfo]
+if {[dict get $meta vlnv] ne "xilinx.com:ip:processing_system7:5.5"} {
+    error "Unexpected PS7 preset VLNV: [dict get $meta vlnv]"
+}
+if {![::aragatz_ps7_preset::validate_preset $ps]} {
+    error "PS7 preset validation failed"
+}
+set cfg [::aragatz_ps7_preset::apply_preset $ps]
+foreach {key value} {
+    CONFIG.PCW_CLK0_FREQ 200000000
+    CONFIG.PCW_USE_M_AXI_GP0 1
+    CONFIG.PCW_USE_S_AXI_HP0 1
+} {
+    if {![dict exists $cfg $key]} {
+        error "Missing required PS7 preset property: $key"
+    }
+    if {[dict get $cfg $key] ne $value} {
+        error "Incompatible PS7 preset value for $key: [dict get $cfg $key]"
+    }
+}
+set_property -dict $cfg $ps
+puts "PS7 preset: $preset_file"
+puts "PS7 DDR: [get_property CONFIG.PCW_UIPARAM_DDR_PARTNO $ps]"
+puts "PS7 DDR high address: [get_property CONFIG.PCW_DDR_RAM_HIGHADDR $ps]"
 
 validate_bd_design
 save_bd_design
