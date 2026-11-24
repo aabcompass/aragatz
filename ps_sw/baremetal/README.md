@@ -1,76 +1,300 @@
-# Aragatz Zynq-7000 bare-metal hardware regression V2
+# Aragatz: аппаратные тесты PS V3
 
-This is a standalone **Cortex-A9 (ps7_cortexa9_0)** program for **Vitis 2023.1**.
-It tests the actual PL camera path through PS UART0, AXI-Lite, AXI3/HP0 and DDR3.
+Standalone-приложение Cortex-A9 для Vivado/Vitis 2023.1. UART: PS UART0,
+115200 8N1. Адреса периферии берутся из BSP xparameters.h.
 
-## Source organization
+**Статус:** V2 прошла на плате по присланному UART-логу. V3 подготовлена и
+проверена на компьютере; её результат на плате следует получить новым запуском.
+Локальные тесты C не заменяют запуск ELF на Zynq.
 
-- `main.c`: UART0 menu and optional autorun (enabled by default).
-- `include/aragatz_hw.h`: register-map definitions and **BSP `xparameters.h`** accessors.
-- `tests/hw_tests.c`: self-checking AXI-Lite, smoke, prehistory and multi-fragment tests.
-- `tests/hw_tests.h`: test entrypoints.
+## 1. Исходники и сборка
 
-**Do not add `xparameters.h` or `xparameters_ps.h` to Git.** These are generated BSP files and
-must come from the XSA exported from the *matching* Aragatz bitstream.
-The supplied BSP definitions are:
+В Vitis-приложение должны входить **все три C-файла**:
 
-```c
-XPAR_CAMERA_CAPTURE_BD_0_BASEADDR  = 0x40000000
-XPAR_CAMERA_TEST_GEN_BD_0_BASEADDR = 0x40010000
-XPAR_PS7_DDR_0_S_AXI_BASEADDR     = 0x00100000
-XPAR_PS7_DDR_0_S_AXI_HIGHADDR     = 0x3FFFFFFF
-STDIN_BASEADDRESS / STDOUT_BASEADDRESS = 0xE0000000 (PS UART0)
-```
+- main.c;
+- tests/hw_tests.c;
+- tests/ddr_tests.c — новый файл, его тоже нужно добавить.
 
-## Vitis 2023.1 setup
+В include paths добавить include/ и tests/. Нужны заголовки
+aragatz_hw.h, hw_tests.h, test_model.h. Остальные зависимости предоставляет
+standalone BSP: xparameters.h, xil_io.h, xil_cache.h, xil_printf.h,
+xuartps_hw.h, sleep.h.
 
-1. Export XSA **including bitstream** from the verified Vivado build.
-2. Generate/refresh the Vitis platform + **standalone Cortex-A9 BSP** from this XSA.
-3. In the Vitis application project, **link** `main.c` and `tests/hw_tests.c`
-   (do not only add the C file containing `main`).
-4. Add **both** application header search paths: `ps_sw/baremetal/include/` and
-   `ps_sw/baremetal/tests/` (these matter if Vitis links the C files as symlinks).
-5. Driver dependencies: standard `xil_io.h`, `xil_cache.h`, `xil_printf.h`, `xuartps_hw.h`,
-   `sleep.h` supplied by the standalone BSP.
-6. Set BSP `stdin=ps7_uart_0`, `stdout=ps7_uart_0`; open PS UART0 at 115200 8N1.
-7. Run via JTAG, with PS7 initialization + updated bitstream before ELF.
+Использовать существующую аппаратную платформу/XSA от работающей V2.
+Изменения V3 относятся к PS-программе и документации; RTL в пакете не меняется.
+Для перехода на эти тесты достаточно пересобрать ELF.
 
-## Crucial linker rule
+Если файлы связаны с проектом Vitis через Linked Resources, проверить, что
+сборка берёт обновлённые файлы из Git. При копировании файлов внутрь
+Vitis обновить копии. Старый main.c или отдельный smoke-файл с ещё одним
+main не должны входить в сборку.
 
-`ARAGATZ_TEST_DDR_BASE = 0x10000000` and `ARAGATZ_TEST_DDR_SIZE = 0x00100000`
-are reserved for the FPGA writer. **The ELF image, stacks, heap, and any DMA must be outside this range.**
-A simple standalone linker setup is to restrict the usable DDR region to
-`ORIGIN=0x00100000, LENGTH=0x03F00000`, i.e. through `0x03FFFFFF`.
-Do not replace the entire Vitis-generated linker script; change only the DDR
-region's origin/length and keep the usual section descriptions. The code checks
-PS DDR and HP0 address boundaries and checks its current stack location, but
-cannot prove that arbitrary application data/heap never use the buffer.
+Каталог ../host_tests/ находится рядом с baremetal/, чтобы не попадать в target
+проект. Это тесты для gcc на компьютере; их mock_bsp нельзя добавлять в
+include paths Vitis.
 
-The AXI HP0 Address Editor in Aragatz currently maps only 0x00000000..0x1FFFFFFF.
-The code does not attempt to write above this window.
+Не копировать и не коммитить генерируемые xparameters.h и
+xparameters_ps.h в приложение. Используемые имена BSP:
 
-## Tests
+| Назначение | Макрос | Значение в пройденной V2 |
+| --- | --- | --- |
+| Capture | XPAR_CAMERA_CAPTURE_BD_0_BASEADDR | 0x40000000 |
+| Generator | XPAR_CAMERA_TEST_GEN_BD_0_BASEADDR | 0x40010000 |
+| Начало DDR BSP | XPAR_PS7_DDR_0_S_AXI_BASEADDR | 0x00100000 |
+| Верх DDR BSP | XPAR_PS7_DDR_0_S_AXI_HIGHADDR | 0x3FFFFFFF |
+| UART0 | XPAR_PS7_UART_0_BASEADDR | 0xE0000000 |
 
-- 1: AXI-Lite: versions + register readback.
-- 2: Smoke: 1 fragment / 3 frames / trigger at frame 32 word 47.
-- 3: Pretrigger: 1, 4, 16, 64 prehistory frames; 3 post-trigger frames.
-- 4: Multi-fragment: 2, 4, 16 fragments, each 4 pre + 4 post frames;
-  triggers at frame 128 + k*128.
-- a: run all.
-- q: return from the firmware.
+stdin и stdout BSP должны быть настроены на PS UART0.
 
-Default firmware runs all on boot and then enters the menu. To disable autorun
-add the compiler symbol `ARAGATZ_AUTORUN=0` to the Vitis application build.
-The generator uses COUNTER, 96 words/frame, rate 24/125, algorithmic trigger
-at word 47. Each DDR fragment is verified word-by-word including preamble,
-trigger-frame index, all science words, and 256 guard bytes following the run.
+## 2. Память приложения и тестовый резерв
 
-The buffer is prefilled with a sentinel, flushed from the CPU cache, and the
-entire region is invalidated after the PL writer has completed. To preserve
-reproducibility, record the Git SHA of the firmware and both IP submodules,
-and record whether the FPGA bitstream was rebuilt after RTL changes.
+Стандартный резерв V3 остаётся прежним:
 
-If a test times out or Capture enters ERROR, the firmware does not force-reset
-PL automatically. Reset/reprogram PL and investigate status/error registers.
+~~~text
+ARAGATZ_TEST_DDR_BASE = 0x10000000
+ARAGATZ_TEST_DDR_SIZE = 0x00100000
+Диапазон            = 0x10000000…0x100FFFFF
+~~~
 
-**Hardware results are not claimed for V2 before running it on the board.**
+В нём не должны находиться ELF-секции, стеки, heap или буферы других
+потребителей. V3 намеренно перезаписывает содержимое всего этого резерва.
+Существующий вариант linker region для приложения остаётся подходящим:
+
+~~~ld
+ORIGIN = 0x00100000
+LENGTH = 0x03F00000
+~~~
+
+Он ограничивает DDR приложения адресом 0x03FFFFFF. Сохранить секции
+сгенерированного lscript.ld, меняя только соответствующие параметры памяти.
+Если размещение приложения уже правильно настроено для V2, менять его не нужно.
+
+Код проверяет BSP-границы, выбранную низкую область HP0, выравнивание и текущий
+stack pointer. Это не заменяет проверку linker map для остальных секций и стеков.
+Перед каждой инициализацией диапазона проверяются его длина и границы.
+
+В capture-тестах PS заполняет резерв sentinel и выполняет flush до запуска PL.
+После подтверждённого END/IDLE выполняется invalidate, затем чтение данных.
+В CPU DDR-тесте между записью и проверкой каждого шаблона выполняются
+flush и invalidate. Области обслуживания кэша выровнены и целиком входят в резерв.
+
+## 3. Меню и рекомендуемый порядок
+
+По умолчанию при старте автоматически выполняется команда a.
+Для запуска сразу в меню определить в compiler symbols:
+
+~~~text
+ARAGATZ_AUTORUN=0
+~~~
+
+| Команда | Проверка |
+| --- | --- |
+| 1 | AXI-Lite: VERSION и readback регистров |
+| 2 | Smoke: три кадра |
+| 3 | Предыстория 1, 4, 16, 64 кадра |
+| 4 | 2, 4, 16 фрагментов, 4 pre + 4 post |
+| 5 | Границы триггера, минимальные размеры, точное заполнение, CONSTANT |
+| 6 | STOP в FILL/WAIT/XFER и захват после каждого STOP |
+| 7 | Отвергнутые конфигурации, runtime error, CLEAR_ERROR и новый захват |
+| 8 | 1024 кадра одним фрагментом; 128 последовательных фрагментов |
+| 9 | CPU write/read-проверка всего резервного 1 МиБ |
+| r | 100 повторных запусков с проверкой всех данных |
+| e | 1000 больших захватов для длительного прогона |
+| s | Перебор скоростей; отдельная характеризация |
+| a | Функциональная V3: 10 групп, включая r; без e и s |
+| q | Завершение программы |
+
+Рекомендуемый запуск:
+
+1. Загрузить ELF V3 при известном исправном bitstream.
+2. Дождаться результата автоматического a либо выполнить a из меню.
+3. После PASS выполнить e, сохранить итог и промежуточный прогресс.
+4. После PASS выполнить s, сохранить результаты каждого профиля и первого
+   сбоя, если он произойдёт.
+
+В функциональной регрессии первая неуспешная группа останавливает продолжение.
+Последующие группы не выдаются за проверенные. При первом сбое повторов или
+endurance прогон также прекращается.
+
+Ожидаемая форма успешного окончания основной регрессии:
+
+~~~text
+=== V3 REGRESSION PASS (10 groups) ===
+BOOT TESTS: PASS
+~~~
+
+Это ожидаемый формат, а не уже полученный результат V3 на плате.
+
+## 4. Граничные и дополнительные сценарии
+
+Команда 5 включает:
+
+- TRIG_WORD=0 и 95 при N_PREV=0 и 64, по два фрагмента.
+- Между триггерами в этих четырёх тестах 512 кадров: есть запас на drain,
+  повторную синхронизацию и накопление истории. Цель — проверить границу кадра.
+- N_FRAMES=2, N_PREV=0, trigger word0.
+- N_FRAMES=2, N_PREV=1, trigger word95: один post-кадр.
+- N_PREV=64, один post-кадр, trigger word95.
+- Четыре фрагмента, для которых MEM_BUFFER_BYTES равен точному размеру
+  требуемой записи. Sentinel после этого конца остаётся в общем резерве.
+- Режим CONSTANT: слово 0x0123456789ABCDEF, два фрагмента.
+
+Для COUNTER первый сохраняемый кадр остаётся trigger_frame−N_PREV,
+включая триггер на TLAST. Сам триггерный кадр входит в post.
+
+Все capture-тесты проверяют каждое слово кадров, преамбулу, номер триггерного
+кадра, AUX и padding. Для timestamp проверяется запись, строгое возрастание
+между фрагментами и совпадение последней преамбулы с CAP_LAST_TIMESTAMP.
+Абсолютная точность timestamp и задержки внешнего триггера этим не измеряются.
+
+GEN проверяется по стабильному курсору после STOP: число слов, завершённых
+кадров, алгоритмических событий и последний триггерный кадр. События после
+END Capture допускаются только в соответствии с расписанием генератора.
+
+## 5. STOP и восстановление
+
+Обычный STOP активного Capture завершается в **IDLE=0**.
+**END=6** означает достижение заданного числа полных фрагментов.
+
+В STOP-FILL генератор не запущен. В STOP-WAIT поток идёт, но генератор
+не выдаёт триггеры. Оба случая проверяют, что DDR не изменена, новых
+фрагментов нет, а LAST-метаданные сохранили предыдущие значения.
+
+В STOP-XFER:
+
+1. Используется медленный поток RATE=1/1000, 4 pre-кадра и цель 64 кадра.
+2. После XFER генератор ставится на PAUSE, конвейеру даётся время завершить
+   выдачу; курсор (F,W) читается стабильно.
+3. При first_saved=128−4=124 ожидаемая длина частичного захвата:
+   F−124+(W != 0).
+4. Выдаётся CAP STOP, затем снимается GEN PAUSE, чтобы закончился текущий кадр.
+5. Только после CAP IDLE останавливается GEN.
+6. Проверяются LAST_STATUS=2, точная длина, все данные и неизменность
+   всей инициализированной области после фактического конца.
+
+После каждого вида STOP выполняется нормальный двухфрагментный захват
+без сброса PL.
+
+Команда 7 проверяет ошибки конфигурации Capture: frames=1, prev=65, prev>=frames,
+fragments=0, невыровненный адрес внутри резерва, нулевой буфер, буфер на один
+байт меньше требуемого и нулевой период включённого внутреннего periodic.
+Ожидаются точные ERROR_FLAGS и IDLE после завершения validation.
+Отвергнутый START сохраняет прежний RUN_FRAGMENTS; отдельный накопительный
+счётчик проверяется после CLEAR_STATS.
+
+Также проверяются шесть недопустимых конфигураций GEN. Для runtime error
+GEN выдаёт 95 слов вместо 96 при выключенных триггерах. Capture должен
+обнаружить format error до начала DDR-фрагмента, перейти в ERROR, затем
+принять CLEAR_ERROR после cleanup и успешно выполнить новый корректный захват.
+
+Тест не выполняет записи в RO/неотображённые регистры или запрещённые
+комбинации команд. Такие AXI-ошибки потребовали бы отдельного обработчика
+исключений CPU.
+
+## 6. Длительность, повторы и скорость
+
+Команда 8 проверяет две нагрузки при номинальном RATE=24/125:
+
+- 1024 последовательных кадра одним фрагментом: 786560 байт вместе с преамбулой.
+- 128 фрагментов по 8 кадров: 802816 байт.
+
+r выполняет 100 захватов, чередуя prev=0/4/64 и trigger word0/47/95.
+При prev=64 используется период 512, в остальных случаях 128.
+
+e выполняет 1000 захватов по 1024 кадра с проверкой каждого слова.
+Суммарно это 786560000 байт проверенных фрагментов; используется повторно
+тот же резерв. Между захватами PS проверяет DDR и подготавливает следующий
+запуск. Это длительный тест повторной эксплуатации, не непрерывная
+безостановочная запись всей этой величины в DDR.
+
+Параметры можно изменить compiler symbols:
+
+~~~text
+ARAGATZ_REPEAT_RUNS=100
+ARAGATZ_ENDURANCE_RUNS=1000
+~~~
+
+Прогресс выводится каждые десять запусков. Во время выполняющегося прогона
+меню не опрашивается. Конечное число повторов задаётся при сборке.
+
+s последовательно проверяет RATE_NUM из 12, 24, 32, 40, 48, 64, 80, 100, 125
+при RATE_DEN=125. Каждый профиль — захват 1024 кадров с полной проверкой данных.
+При 200 МГц это расчётные скорости входного потока от 153, 6 до 1600 МБ/с.
+Они не являются измерением скорости DDR.
+
+При первом сбое sweep останавливается и сообщает последний прошедший профиль.
+Ошибка данных остаётся ошибкой этого профиля; программа не превращает
+переполнение в PASS целостности. По ERROR_FLAGS и логу следует определить,
+получена перегрузка либо дефект. Одного короткого успешного профиля
+недостаточно для заявления о длительной устойчивой работе на этой скорости.
+
+При ошибке сохраняется первичная диагностика. Если Capture ещё активен,
+программа сначала пытается закончить CAP STOP с продолжающимся источником,
+затем останавливает GEN; sticky errors автоматически не очищает.
+При незавершившемся cleanup или состоянии ERROR перед следующим обычным
+тестом потребуется восстановление/перепрограммирование PL.
+
+## 7. Что означает CPU DDR-тест
+
+Команда 9 обращается только к 0x10000000…0x100FFFFF:
+
+- шесть полных шаблонов: нули, единицы, 55555555,AAAAAAAA, адрес и инверсия адреса;
+- одновременные адресные пробы со смещениями степеней двойки;
+- walking one/zero в четырёх строках кэша.
+
+Для стандартного 1 МиБ успешный проход содержит **1574950 проверок**.
+Между записью и чтением выполняется cache maintenance, поэтому сравнение
+не ограничивается оставшимися в кэше записанными значениями.
+
+Это проверка CPU-доступа к выделенному окну. PL/HP0 проверяются capture-
+сценариями. Физическая ёмкость всей DDR из этого теста не определяется.
+Для полного address-alias теста всей памяти нужна отдельная программа,
+размещённая вне проверяемой DDR, и подтверждённая геометрия памяти платы.
+
+## 8. Локальная проверка C
+
+Из корня Aragatz:
+
+~~~bash
+bash ps_sw/host_tests/run.sh
+~~~
+
+Проверки:
+
+- 5840 сравнений модели расписания событий, размеров и partial STOP;
+- выполнение настоящего ddr_tests.c на модели RAM/CPU cache;
+- инъекции stuck bit, address alias, повреждений walking-фазы;
+- контроль диапазонов, flush/invalidate и предварительных условий;
+- gcc C11, -Wall -Wextra -Werror, синтаксис и полная линковка всех трёх
+  target C-файлов с BSP-заглушками, с autorun и без него.
+
+Целевой main на компьютере не исполняется. Сборка ARM/Vitis, симуляция FPGA
+и запуск на плате не подменяются этими проверками.
+
+## 9. Источники и результаты
+
+PS baseline: Aragatz 0f00991fafb8ad4f15836742e25c70cbbcb0240f,
+сообщение commit HW/SW test passed. Это V2 с исправлением подсчёта GEN.
+
+В Aragatz записаны pins:
+
+- Capture: 293b14163668ee141cda2ad36c470fa61f900620;
+- Generator: 6bd968297201383d788fcd744fac085e7f2e424b.
+
+При подготовке их чтение из GitHub возвращало 404. Анализ контрактов выполнен
+по доступным Capture 91c737a2ae3fc6144d94f751d6cc9860eb4f20d2 и
+Generator ae34422674489ae22f03075a723ed6bf7e5b8a81, с учётом уже выполненной
+в аппаратной сессии правки системных AXI-Lite адресов.
+Побайтовое совпадение внутренних модулей с недоступными pins не подтверждено.
+Перед фиксацией окончательной документации опубликовать текущие commits
+сабмодулей либо сверить локальный RTL.
+
+В журнале нового запуска сохранить: git SHA Aragatz, git submodule status,
+версии Vitis/BSP, параметры linker, частоту PL, UART-лог a, e, s.
+Зафиксировать отдельно последнюю скорость, прошедшую короткий профиль,
+и результат длительного теста на выбранной скорости.
+
+Связанные документы:
+
+- [Документация генератора](../../ip_repo/camera_test_gen/docs/camera_test_generator.md)
+- [Контекст следующего этапа lwIP](../../docs/lwip_handoff.md)

@@ -1,0 +1,13 @@
+Aragatz PS V3 local validation — 2026-11-24
+PS baseline: 0f00991fafb8ad4f15836742e25c70cbbcb0240f
+Compiler: gcc, C11, -Wall -Wextra -Werror
+V3 ARM/Vitis build and on-board execution: not performed here.
+
+HOST: event schedule 5794 comparisons
+HOST: buffer layout 24 comparisons
+HOST: partial-frame model 22 comparisons
+HOST MODEL PASS: 5840 comparisons, 0 errors
+DDR HOST PASS: 1574950 clean checks; bounds/cache ordering, two gates, stuck bit, address alias, alias probes, walking fault.
+DDR HOST PASS: misaligned window rejected before any access.
+HOST BUILD PASS: target syntax and full-link checks; default autorun and menu-only.
+Target executable was not run. No FPGA simulation or on-board test was run.

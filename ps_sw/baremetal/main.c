@@ -13,7 +13,7 @@
 int main(void)
 {
     int result;
-    xil_printf("\r\n*** ARAGATZ HARDWARE TESTS V2 ***\r\n");
+    xil_printf("\r\n*** ARAGATZ HARDWARE TESTS V3 ***\r\n");
     xil_printf("CAP=%08x GEN=%08x DDR=%08x..%08x\r\n",
                (unsigned)CAP_BASE, (unsigned)GEN_BASE,
                (unsigned)XPAR_PS7_DDR_0_S_AXI_BASEADDR,
@@ -28,8 +28,10 @@ int main(void)
 #endif
     for (;;) {
         char ch;
-        xil_printf("\r\n1: AXI-Lite  2: Smoke  3: Pretrigger  4: Fragments"
-                   "  a: All  q: Quit\r\n> ");
+        xil_printf("\r\n1: AXI-Lite  2: Smoke  3: Pretrigger  4: Fragments\r\n"
+                   "5: Boundaries/pattern  6: STOP/restart  7: Error recovery\r\n"
+                   "8: Long capture  9: CPU DDR  r: Repeat  e: Endurance\r\n"
+                   "s: Rate sweep  a: V3 regression  q: Quit\r\n> ");
         ch = (char)XUartPs_RecvByte((uint32_t)STDIN_BASEADDRESS);
         xil_printf("%c\r\n", ch);
         result = 0;
@@ -38,6 +40,16 @@ int main(void)
         case '2': result = aragatz_test_smoke(); break;
         case '3': result = aragatz_test_pretrigger(); break;
         case '4': result = aragatz_test_fragments(); break;
+        case '5': result = aragatz_test_boundaries(); break;
+        case '6': result = aragatz_test_stop_restart(); break;
+        case '7': result = aragatz_test_recovery(); break;
+        case '8': result = aragatz_test_long(); break;
+        case '9': result = aragatz_test_ddr(); break;
+        case 'r': case 'R': result = aragatz_test_repeat(); break;
+        case 'e': case 'E': result = aragatz_test_endurance(); break;
+        case 's': case 'S':
+            (void)aragatz_test_rate_sweep();
+            continue; /* The sweep reports its own integrity/limit outcome. */
         case 'a': case 'A': result = aragatz_test_all(); break;
         case 'q': case 'Q':
             xil_printf("Done.\r\n");
