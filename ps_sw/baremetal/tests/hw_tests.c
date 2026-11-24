@@ -43,6 +43,23 @@ static void check_ddr64(uint32_t byte_off, uint32_t hi, uint32_t lo)
     }
 }
 
+/* The generator can run after Capture reaches END: count every scheduled
+ * event actually emitted before GEN STOP, including an unfinished frame.
+ * frames_sent counts completed frames; next_word is the next word index. */
+static uint32_t expected_gen_alg(uint32_t first, uint32_t period,
+                                 uint32_t frames_sent, uint32_t next_word)
+{
+    uint32_t count = 0U;
+    if (frames_sent > first)
+        count = (period == 0U) ? 1U :
+                1U + (frames_sent - 1U - first) / period;
+    if (frames_sent >= first && next_word > TRIG_WORD &&
+        ((period == 0U && frames_sent == first) ||
+         (period != 0U && (frames_sent - first) % period == 0U)))
+        count++;
+    return count;
+}
+
 static int board_safety_check(void)
 {
     uint64_t first = (uint64_t)ARAGATZ_TEST_DDR_BASE;
@@ -279,7 +296,30 @@ static int run_scenario(const char *name, uint32_t prev,
     expect32("CAP last trigger data HI", cap_rd(CAP_LAST_TRIG_DATA_HI),
              ARAGATZ_TRIGGER_MAGIC);
     expect32("CAP alg accepted", cap_rd(CAP_TRIG_ACCEPTED), nfragments);
-    expect32("GEN alg count", gen_rd(GEN_ALG_COUNT), nfragments);
+    {
+        /* Generator is stopped, so these counters are stable. The CPU
+         * polls CAP every 1 ms; extra triggers before GEN STOP are legal. */
+        uint32_t gen_frames = gen_rd(GEN_FRAMES_SENT);
+        uint32_t gen_frame = gen_rd(GEN_FRAME_INDEX);
+        uint32_t gen_word = gen_rd(GEN_WORD_INDEX);
+        uint32_t gen_triggers = gen_rd(GEN_ALG_COUNT);
+        uint32_t expected = expected_gen_alg(first_trigger, period,
+                                              gen_frames, gen_word);
+        expect32("GEN frame cursor", gen_frame, gen_frames);
+        if (gen_word >= ARAGATZ_FRAME_WORDS) {
+            xil_printf("FAIL GEN word index out of range: %d\r\n",
+                       (unsigned)gen_word);
+            errors++;
+        }
+        expect32("GEN alg schedule", gen_triggers, expected);
+        if (gen_triggers < nfragments) {
+            xil_printf("FAIL GEN trigger count below captured fragments\r\n");
+            errors++;
+        }
+        if (gen_triggers > nfragments)
+            xil_printf("INFO: GEN made %d extra scheduled trigger(s) before STOP\r\n",
+                       (unsigned)(gen_triggers - nfragments));
+    }
     /* A nonzero missed count is unexpected at the low nominal rate. */
     expect32("CAP alg missed", cap_rd(CAP_TRIG_MISSED), 0U);
 
