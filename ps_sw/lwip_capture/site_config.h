@@ -6,6 +6,7 @@
 #define ARAGATZ_IP_D 10
 #define ARAGATZ_MAC 0x02,0x41,0x52,0x47,0x00,0x01
 #define ARAGATZ_PORT 5001
+/* Set to 1 only after the separate stock echo/PHY qualification passes. */
 #ifndef ARAGATZ_ENABLE_CAPTURE
 #define ARAGATZ_ENABLE_CAPTURE 0
 #endif

@@ -1,0 +1,409 @@
+--- a/xemacpsif_physpeed.c
++++ b/xemacpsif_physpeed.c
+@@ -111,6 +111,128 @@
+ #include "xparameters_ps.h"
+ #include "xparameters.h"
+ #include "xemac_ieee_reg.h"
++#include "sleep.h"
++
++/* Inserted by apply_adapter_patch.py into the 2023.1 PS GEM adapter.
++ * Register definitions: Microchip DS00002117K, sections 4.1/4.2.
++ * Asymmetric pause is disabled: DS80000692D, module 1.
++ * Board reset, MMD skew, reference clock and master/slave settings are untouched.
++ */
++#if !defined(CONFIG_LINKSPEED_AUTODETECT)
++#error "Aragatz KSZ9031 adapter requires linkspeed=autodetect"
++#endif
++#if defined(SGMII_FIXED_LINK) || XPAR_GIGE_PCS_PMA_1000BASEX_CORE_PRESENT == 1 || XPAR_GIGE_PCS_PMA_SGMII_CORE_PRESENT == 1
++#error "Aragatz KSZ9031 overlay is for one RGMII PHY, not PCS/PMA/SGMII"
++#endif
++
++#define ARAGATZ_KSZ9031_ID1 0x0022U
++#define ARAGATZ_KSZ9031_ID2 0x1620U
++#define ARAGATZ_KSZ9031_ID2_MASK 0xFFF0U
++
++#if defined(CONFIG_LINKSPEED_AUTODETECT)
++/* 0: first attempt; 1: configured; 2: setup failed, restart application.
++ * This avoids re-running a blocking negotiation from the stock link timer ISR.
++ * The Aragatz application uses one GEM/one PHY. No concurrent MDIO callers.
++ */
++static u8_t aragatz_ksz9031_state[2][32];
++
++/* Returns 1 when ready, 0 while negotiating/down, -1 on MDIO failure,
++ * -2 on an invalid speed or half-duplex result. No writes or delays here.
++ */
++int aragatz_ksz9031_read_speed(XEmacPs *mac, u32_t addr, u32_t *speed)
++{
++	u16_t bmsr, mode, control;
++	if (addr > 31U || speed == 0)
++		return -1;
++	*speed = 0U;
++	if (XEmacPs_PhyRead(mac, addr, 0U, &control) != XST_SUCCESS ||
++	    XEmacPs_PhyRead(mac, addr, 1U, &bmsr) != XST_SUCCESS ||
++	    XEmacPs_PhyRead(mac, addr, 1U, &bmsr) != XST_SUCCESS)
++		return -1;
++	/* Do not accept the previous link while restart/reset is still pending. */
++	if ((control & 0x8200U) != 0U)
++		return 0;
++	/* Reset, loopback, power-down, isolation or disabled auto-negotiation
++	 * must not be mistaken for a valid result from stale status bits. */
++	if ((control & 0x4C00U) != 0U || (control & 0x1000U) == 0U)
++		return -2;
++	/* BMSR link is latched low: the second read gives current state. */
++	if ((bmsr & 0x0024U) != 0x0024U)
++		return 0;
++	if (XEmacPs_PhyRead(mac, addr, 0x1FU, &mode) != XST_SUCCESS)
++		return -1;
++	if ((mode & 0x0008U) == 0U || (mode & 0x0001U) != 0U)
++		return -2;
++	switch (mode & 0x0070U) {
++	case 0x0040U: *speed = 1000U; break;
++	case 0x0020U: *speed = 100U; break;
++	case 0x0010U: *speed = 10U; break;
++	default: return -2;
++	}
++	return 1;
++}
++
++static u32_t get_KSZ9031_phy_speed(XEmacPs *mac, u32_t addr)
++{
++	u16_t control, advertise, advertise1000;
++	u32_t speed = 0U;
++	u32_t emacnum, attempt, attempts;
++	int result;
++	if (addr > 31U)
++		return XST_FAILURE;
++	emacnum = mac->Config.BaseAddress == XPAR_XEMACPS_0_BASEADDR ? 0U : 1U;
++	if (aragatz_ksz9031_state[emacnum][addr] == 2U)
++		return XST_FAILURE;
++	attempts = 1U;
++	if (aragatz_ksz9031_state[emacnum][addr] == 0U) {
++		/* Fail closed if any configuration operation fails. */
++		aragatz_ksz9031_state[emacnum][addr] = 2U;
++		if (XEmacPs_PhyRead(mac, addr, 0U, &control) != XST_SUCCESS ||
++		    XEmacPs_PhyRead(mac, addr, 4U, &advertise) != XST_SUCCESS ||
++		    XEmacPs_PhyRead(mac, addr, 9U, &advertise1000) != XST_SUCCESS) {
++			xil_printf("KSZ9031 MDIO read failed during setup\r\n");
++			return XST_FAILURE;
++		}
++		/* Do not guess reset/power/loopback/isolation handling. */
++		if ((control & 0xCC00U) != 0U || (advertise & 0x001FU) != 1U) {
++			xil_printf("KSZ9031 bad initial BMCR/ANAR: %04x/%04x\r\n",
++				control, advertise);
++			return XST_FAILURE;
++		}
++		/* Advertise 10/100/1000 full duplex only. Keep symmetric pause,
++		 * existing master/slave policy and all unrelated fields.
++		 * Disable asymmetric pause per DS80000692D module 1.
++		 */
++		advertise = (u16_t)((advertise & ~0x09E0U) | 0x0140U);
++		advertise1000 = (u16_t)((advertise1000 & ~0x0300U) | 0x0200U);
++		if (XEmacPs_PhyWrite(mac, addr, 4U, advertise) != XST_SUCCESS ||
++		    XEmacPs_PhyWrite(mac, addr, 9U, advertise1000) != XST_SUCCESS ||
++		    XEmacPs_PhyWrite(mac, addr, 0U,
++			(u16_t)(control | 0x1200U)) != XST_SUCCESS) {
++			xil_printf("KSZ9031 MDIO write failed during setup\r\n");
++			return XST_FAILURE;
++		}
++		aragatz_ksz9031_state[emacnum][addr] = 1U;
++		attempts = 100U; /* <= 10 s startup wait, 100 ms between polls. */
++		xil_printf("KSZ9031: auto-negotiation, full duplex only\r\n");
++	}
++	for (attempt = 0U; attempt < attempts; ++attempt) {
++		result = aragatz_ksz9031_read_speed(mac, addr, &speed);
++		if (result == 1)
++			return speed;
++		if (result < 0) {
++			xil_printf("KSZ9031 status error %d (MDIO or duplex/speed)\r\n", result);
++			return XST_FAILURE;
++		}
++		if (attempts > 1U)
++			usleep(100000U);
++	}
++	if (attempts > 1U)
++		xil_printf("KSZ9031 link timeout; link monitor will retry status\r\n");
++	return XST_FAILURE;
++}
++#endif
++
+ 
+ #if defined (__aarch64__)
+ #include "bspconfig.h"
+@@ -234,44 +356,42 @@
+ 	return 0;
+ }
+ 
+-void detect_phy(XEmacPs *xemacpsp)
++/* Aragatz has one RGMII KSZ9031 on the selected GEM MDIO bus.
++ * Scan both identifier registers at addresses 0..31; never treat address 0
++ * as a broadcast fallback. Discovery performs no PHY writes.
++ */
++void detect_phy(XEmacPs *mac)
+ {
+-	u16_t phy_reg;
+-	u32_t phy_addr;
+-	u32_t emacnum;
+-	u16_t phy_id;
+-
+-	if (xemacpsp->Config.BaseAddress == XPAR_XEMACPS_0_BASEADDR)
+-		emacnum = 0;
++	u32_t addr, selected = 32U, found = 0U, failed = 0U;
++	u32_t *map = mac->Config.BaseAddress == XPAR_XEMACPS_0_BASEADDR
++		? phymapemac0 : phymapemac1;
++	u16_t id1, id2;
++	for (addr = 0U; addr < 32U; ++addr)
++		map[addr] = FALSE;
++	for (addr = 0U; addr < 32U; ++addr) {
++		if (XEmacPs_PhyRead(mac, addr, 2U, &id1) != XST_SUCCESS ||
++		    XEmacPs_PhyRead(mac, addr, 3U, &id2) != XST_SUCCESS) {
++			failed = 1U;
++			xil_printf("MDIO discovery failed at address %d\r\n", addr);
++			continue;
++		}
++		if (id1 == ARAGATZ_KSZ9031_ID1 &&
++		    (id2 & ARAGATZ_KSZ9031_ID2_MASK) == ARAGATZ_KSZ9031_ID2) {
++			selected = addr;
++			++found;
++			xil_printf("KSZ9031 detected: address %d ID %04x:%04x\r\n",
++				addr, id1, id2);
++		} else if (!((id1 == 0U && id2 == 0U) ||
++			     (id1 == 0xFFFFU && id2 == 0xFFFFU))) {
++			xil_printf("Ignoring non-KSZ9031 PHY: address %d ID %04x:%04x\r\n",
++				addr, id1, id2);
++		}
++	}
++	if (found == 1U && failed == 0U)
++		map[selected] = TRUE;
+ 	else
+-		emacnum = 1;
+-	for (phy_addr = 31; phy_addr > 0; phy_addr--) {
+-		XEmacPs_PhyRead(xemacpsp, phy_addr, PHY_DETECT_REG,
+-							&phy_reg);
+-		XEmacPs_PhyRead(xemacpsp, phy_addr, PHY_IDENTIFIER_1_REG,
+-				&phy_id);
+-
+-		if (((phy_reg != 0xFFFF) &&
+-			((phy_reg & PHY_DETECT_MASK) == PHY_DETECT_MASK)) ||
+-			(phy_id == PHY_XILINX_PCS_PMA_ID1)) {
+-			/* Found a valid PHY address */
+-			LWIP_DEBUGF(NETIF_DEBUG, ("XEmacPs detect_phy: PHY detected at address %d.\r\n",
+-																	phy_addr));
+-			if (emacnum == 0)
+-				phymapemac0[phy_addr] = TRUE;
+-			else
+-				phymapemac1[phy_addr] = TRUE;
+-
+-			XEmacPs_PhyRead(xemacpsp, phy_addr, PHY_IDENTIFIER_1_REG,
+-							&phy_reg);
+-			if ((phy_reg != PHY_MARVELL_IDENTIFIER) &&
+-				(phy_reg != PHY_TI_IDENTIFIER) &&
+-				(phy_reg != PHY_REALTEK_IDENTIFIER) &&
+-				(phy_reg != PHY_ADI_IDENTIFIER)) {
+-				xil_printf("WARNING: Not a Marvell or TI or Realtek or Xilinx PCS PMA Ethernet PHY or ADI Ethernet PHY. Please verify the initialization sequence\r\n");
+-			}
+-		}
+-	}
++		xil_printf("KSZ9031 discovery rejected: count=%d MDIO_error=%d\r\n",
++			found, failed);
+ }
+ 
+ #ifdef SGMII_FIXED_LINK
+@@ -310,7 +430,7 @@
+ 	} else if (link_speed == 100) {
+ 		SetUpSLCRDivisors(xemacpsp->Config.BaseAddress,100);
+ 		convspeeddupsetting = XEMACPS_GMII2RGMII_SPEED100_FD;
+-	} else if (link_speed != XST_FAILURE){
++	} else if (link_speed == 10){
+ 		SetUpSLCRDivisors(xemacpsp->Config.BaseAddress,10);
+ 		convspeeddupsetting = XEMACPS_GMII2RGMII_SPEED10_FD;
+ 	} else {
+@@ -796,12 +916,21 @@
+ 
+ static u32_t get_IEEE_phy_speed(XEmacPs *xemacpsp, u32_t phy_addr)
+ {
+-	u16_t phy_identity;
++	u16_t phy_identity, phy_model;
+ 	u32_t RetStatus;
+ 
+-	XEmacPs_PhyRead(xemacpsp, phy_addr, PHY_IDENTIFIER_1_REG,
+-					&phy_identity);
+-	if (phy_identity == PHY_TI_IDENTIFIER) {
++	if (XEmacPs_PhyRead(xemacpsp, phy_addr, PHY_IDENTIFIER_1_REG,
++		&phy_identity) != XST_SUCCESS)
++		return XST_FAILURE;
++	if (phy_identity == ARAGATZ_KSZ9031_ID1) {
++		if (XEmacPs_PhyRead(xemacpsp, phy_addr, PHY_IDENTIFIER_2_REG,
++			&phy_model) != XST_SUCCESS ||
++		    (phy_model & ARAGATZ_KSZ9031_ID2_MASK) != ARAGATZ_KSZ9031_ID2) {
++			xil_printf("Unsupported Micrel PHY model or MDIO failure\r\n");
++			return XST_FAILURE;
++		}
++		RetStatus = get_KSZ9031_phy_speed(xemacpsp, phy_addr);
++	} else if (phy_identity == PHY_TI_IDENTIFIER) {
+ 		RetStatus = get_TI_phy_speed(xemacpsp, phy_addr);
+ 	} else if (phy_identity == PHY_REALTEK_IDENTIFIER) {
+ 		RetStatus = get_Realtek_phy_speed(xemacpsp, phy_addr);
+--- a/xemacpsif_hw.c
++++ b/xemacpsif_hw.c
+@@ -33,7 +33,7 @@
+ #include "lwipopts.h"
+ 
+ 
+-u32_t link_speed = 100;
++u32_t link_speed = 0;
+ extern XEmacPs_Config XEmacPs_ConfigTable[];
+ extern u32_t phymapemac0[32];
+ extern u32_t phymapemac1[32];
+@@ -102,8 +102,10 @@
+  *  phy_setup_emacps is then called for each PHY present on the MDIO bus.
+  */
+ #ifndef SGMII_FIXED_LINK
++	link_speed = 0U;
++	phyaddrforemac = 32U;
+ 	detect_phy(xemacpsp);
+-	for (i = 31; i > 0; i--) {
++	for (i = 32; i-- > 0;) {
+ 		if (xemacpsp->Config.BaseAddress == XPAR_XEMACPS_0_BASEADDR) {
+ 			if (phymapemac0[i] == TRUE) {
+ 				link_speed = phy_setup_emacps(xemacpsp, i);
+@@ -118,19 +120,17 @@
+ 			}
+ 		}
+ 	}
+-	/* If no PHY was detected, use broadcast PHY address of 0 */
+-	if (xemacpsp->Config.BaseAddress == XPAR_XEMACPS_0_BASEADDR) {
+-		if (phyfoundforemac0 == FALSE)
+-			link_speed = phy_setup_emacps(xemacpsp, 0);
+-	} else {
+-		if (phyfoundforemac1 == FALSE)
+-			link_speed = phy_setup_emacps(xemacpsp, 0);
++	/* Address 0 is scanned explicitly; do not configure an absent PHY. */
++	if (phyfoundforemac0 == FALSE && phyfoundforemac1 == FALSE) {
++		xemacps->eth_link_status = ETH_LINK_UNDEFINED;
++		xil_printf("No PHY detected; check reset/MDIO and restart application\r\n");
++		return;
+ 	}
+ #else
+ 	link_speed = pcs_setup_emacps(xemacpsp);
+ #endif
+ 
+-	if (link_speed == XST_FAILURE) {
++	if (link_speed != 10U && link_speed != 100U && link_speed != 1000U) {
+ 		xemacps->eth_link_status = ETH_LINK_DOWN;
+ 		xil_printf("Phy setup failure %s \n\r",__func__);
+ 		return;
+@@ -152,6 +152,12 @@
+ 	s32_t status = XST_SUCCESS;
+ 
+ 	xemacpsp = &xemacps->emacps;
++	/* Startup may have timed out before any valid negotiated speed. */
++	if (link_speed != 10U && link_speed != 100U && link_speed != 1000U) {
++		xemacps->eth_link_status = ETH_LINK_DOWN;
++		xil_printf("GEM recovery has no valid negotiated PHY speed\r\n");
++		return;
++	}
+ 
+ 	/* set mac address */
+ 	status = XEmacPs_SetMacAddress(xemacpsp, (void*)(netif->hwaddr), 1);
+--- a/xadapter.c
++++ b/xadapter.c
+@@ -72,6 +72,10 @@
+ int lwip_runtime_debug = 0;
+ 
+ u32_t phyaddrforemac;
++extern u32_t link_speed; /* GEM recovery cache */
++#if defined(XLWIP_CONFIG_INCLUDE_GEM)
++extern int aragatz_ksz9031_read_speed(XEmacPs *, u32_t, u32_t *);
++#endif
+ 
+ void
+ lwip_raw_init()
+@@ -282,59 +286,37 @@
+ #endif
+ 
+ #if defined(XLWIP_CONFIG_INCLUDE_GEM)
++/* Main-context link polling. The helper reads status without writes/sleeps;
++ * phy_setup_emacps reuses its configured state after startup.
++ */
+ void emacps_link_status(struct netif *netif, xemacpsif_s *xemacs, XEmacPs *xemacp)
+ {
+-	u32_t link_speed, phy_link_status, phy_autoneg_status;
+-	u16_t status;
+-
+-	if ((xemacp->IsReady != (u32)XIL_COMPONENT_IS_READY) ||
+-			(xemacs->eth_link_status == ETH_LINK_UNDEFINED))
+-		return;
+-#ifndef SGMII_FIXED_LINK
+-	/* Read Phy Status register twice to get the confirmation of the current
+-	 * link status.
+-	 */
+-	XEmacPs_PhyRead(xemacp, phyaddrforemac, IEEE_STATUS_REG_OFFSET, &status);
+-	XEmacPs_PhyRead(xemacp, phyaddrforemac, IEEE_STATUS_REG_OFFSET, &status);
+-	if (status & IEEE_STAT_LINK_STATUS)
+-		phy_link_status = 1;
+-	else
+-		phy_link_status = 0;
+-
+-	if (status & IEEE_STAT_AUTONEGOTIATE_COMPLETE)
+-		phy_autoneg_status = 1;
+-	else
+-		phy_autoneg_status = 0;
+-
+-#else
+-	phy_link_status = pcs_link_detect(xemacp);
+-#endif
+-
+-	if ((xemacs->eth_link_status == ETH_LINK_UP) && (!phy_link_status))
+-		xemacs->eth_link_status = ETH_LINK_DOWN;
+-
+-	switch (xemacs->eth_link_status) {
+-		case ETH_LINK_UNDEFINED:
+-		case ETH_LINK_UP:
+-			return;
+-		case ETH_LINK_DOWN:
+-			netif_set_link_down(netif);
+-			xemacs->eth_link_status = ETH_LINK_NEGOTIATING;
+-			xil_printf("Ethernet Link down\r\n");
+-			break;
+-		case ETH_LINK_NEGOTIATING:
+-			if (phy_link_status && phy_autoneg_status) {
+-
+-				link_speed = phy_setup_emacps(xemacp,
+-						phyaddrforemac);
+-				XEmacPs_SetOperatingSpeed(xemacp, link_speed);
+-				netif_set_link_up(netif);
+-				xemacs->eth_link_status = ETH_LINK_UP;
+-				xil_printf("Ethernet Link up\r\n");
+-			}
+-			break;
+-	}
+-	return;
++	u32_t detected_speed = 0U, new_link_speed;
++	int status;
++	if (xemacp->IsReady != (u32)XIL_COMPONENT_IS_READY ||
++	    xemacs->eth_link_status == ETH_LINK_UNDEFINED || phyaddrforemac > 31U)
++		return;
++	status = aragatz_ksz9031_read_speed(xemacp, phyaddrforemac, &detected_speed);
++	if (status != 1) {
++		if (xemacs->eth_link_status == ETH_LINK_UP)
++			xil_printf("Ethernet Link down or invalid PHY status\r\n");
++		netif_set_link_down(netif);
++		xemacs->eth_link_status = ETH_LINK_NEGOTIATING;
++		return;
++	}
++	if (xemacs->eth_link_status == ETH_LINK_UP && link_speed == detected_speed)
++		return;
++	new_link_speed = phy_setup_emacps(xemacp, phyaddrforemac);
++	if (new_link_speed != 10U && new_link_speed != 100U && new_link_speed != 1000U) {
++		netif_set_link_down(netif);
++		xemacs->eth_link_status = ETH_LINK_NEGOTIATING;
++		return;
++	}
++	link_speed = new_link_speed;
++	XEmacPs_SetOperatingSpeed(xemacp, new_link_speed);
++	netif_set_link_up(netif);
++	xemacs->eth_link_status = ETH_LINK_UP;
++	xil_printf("Ethernet Link up: %d Mbps full duplex\r\n", new_link_speed);
+ }
+ #endif
+ 

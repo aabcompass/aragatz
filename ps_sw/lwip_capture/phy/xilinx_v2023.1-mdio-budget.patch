@@ -1,0 +1,62 @@
+--- a/xemacps_control.c
++++ b/xemacps_control.c
+@@ -974,6 +974,7 @@
+ 	volatile u32 Ipisr;
+ 	u32 IpReadTemp;
+ 	LONG Status;
++	u32 PollCount;
+ 
+ 	Xil_AssertNonvoid(InstancePtr != NULL);
+ 
+@@ -993,11 +994,17 @@
+ 	XEmacPs_WriteReg(InstancePtr->Config.BaseAddress,
+ 			   XEMACPS_PHYMNTNC_OFFSET, Mgtcr);
+ 
+-	do {
++	/* Finite poll budget; not a wall-clock timeout guarantee. */
++	for (PollCount = 0U; PollCount < 100000U; ++PollCount) {
+ 		Ipisr = XEmacPs_ReadReg(InstancePtr->Config.BaseAddress,
+-					  XEMACPS_NWSR_OFFSET);
+-			IpReadTemp = Ipisr;
+-		} while ((IpReadTemp & XEMACPS_NWSR_MDIOIDLE_MASK) == 0x00000000U);
++				XEMACPS_NWSR_OFFSET);
++		IpReadTemp = Ipisr;
++		if ((IpReadTemp & XEMACPS_NWSR_MDIOIDLE_MASK) != 0U)
++			break;
++	}
++	if (PollCount == 100000U) {
++		return (LONG)XST_FAILURE;
++	}
+ 
+ 	/* Read data */
+ 		*PhyDataPtr = (u16)XEmacPs_ReadReg(InstancePtr->Config.BaseAddress,
+@@ -1055,6 +1062,7 @@
+ 	volatile u32 Ipisr;
+ 	u32 IpWriteTemp;
+ 	LONG Status;
++	u32 PollCount;
+ 
+ 	Xil_AssertNonvoid(InstancePtr != NULL);
+ 
+@@ -1073,11 +1081,17 @@
+ 	XEmacPs_WriteReg(InstancePtr->Config.BaseAddress,
+ 			   XEMACPS_PHYMNTNC_OFFSET, Mgtcr);
+ 
+-	do {
++	/* Finite poll budget; not a wall-clock timeout guarantee. */
++	for (PollCount = 0U; PollCount < 100000U; ++PollCount) {
+ 		Ipisr = XEmacPs_ReadReg(InstancePtr->Config.BaseAddress,
+-					  XEMACPS_NWSR_OFFSET);
+-				IpWriteTemp = Ipisr;
+-		} while ((IpWriteTemp & XEMACPS_NWSR_MDIOIDLE_MASK) == 0x00000000U);
++				XEMACPS_NWSR_OFFSET);
++		IpWriteTemp = Ipisr;
++		if ((IpWriteTemp & XEMACPS_NWSR_MDIOIDLE_MASK) != 0U)
++			break;
++	}
++	if (PollCount == 100000U) {
++		return (LONG)XST_FAILURE;
++	}
+ 
+ 		Status = (LONG)(XST_SUCCESS);
+ 	}

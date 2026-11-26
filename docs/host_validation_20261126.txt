@@ -1,0 +1,96 @@
+test_bad_ack_response_is_not_success (test_aragatz_client.LoopbackTests.test_bad_ack_response_is_not_success) ... ok
+test_benchmark_rejects_changed_retained_buffer (test_aragatz_client.LoopbackTests.test_benchmark_rejects_changed_retained_buffer) ... ok
+test_benchmark_rejects_replaced_valid_saved_capture_before_ack (test_aragatz_client.LoopbackTests.test_benchmark_rejects_replaced_valid_saved_capture_before_ack) ... ok
+test_benchmark_replays_one_immutable_capture_then_acks (test_aragatz_client.LoopbackTests.test_benchmark_replays_one_immutable_capture_then_acks) ... ok
+test_capture_is_saved_and_read_back_before_ack (test_aragatz_client.LoopbackTests.test_capture_is_saved_and_read_back_before_ack) ... ok
+test_corrupt_payload_does_not_ack_or_save (test_aragatz_client.LoopbackTests.test_corrupt_payload_does_not_ack_or_save) ... ok
+test_failed_disk_readback_does_not_ack (test_aragatz_client.LoopbackTests.test_failed_disk_readback_does_not_ack) ... ok
+test_fetch_rejects_unexpected_capture_id (test_aragatz_client.LoopbackTests.test_fetch_rejects_unexpected_capture_id) ... ok
+test_file_error_does_not_ack (test_aragatz_client.LoopbackTests.test_file_error_does_not_ack) ... ok
+test_reconnect_fetch_preserves_then_releases_capture (test_aragatz_client.LoopbackTests.test_reconnect_fetch_preserves_then_releases_capture) ... ok
+test_saved_capture_can_be_verified_offline (test_aragatz_client.LoopbackTests.test_saved_capture_can_be_verified_offline) ... ok
+test_start_rejects_wrong_geometry (test_aragatz_client.LoopbackTests.test_start_rejects_wrong_geometry) ... ok
+test_bad_end (test_aragatz_client.Tests.test_bad_end) ... ok
+test_command (test_aragatz_client.Tests.test_command) ... ok
+test_counter_even_with_matching_crc (test_aragatz_client.Tests.test_counter_even_with_matching_crc) ... ok
+test_crc (test_aragatz_client.Tests.test_crc) ... ok
+test_crc_corruption (test_aragatz_client.Tests.test_crc_corruption) ... ok
+test_eof (test_aragatz_client.Tests.test_eof) ... ok
+test_geometry (test_aragatz_client.Tests.test_geometry) ... ok
+test_header_corruption (test_aragatz_client.Tests.test_header_corruption) ... ok
+test_padding (test_aragatz_client.Tests.test_padding) ... ok
+test_segmented (test_aragatz_client.Tests.test_segmented) ... ok
+test_all_preamble_fields_checked_even_with_recomputed_crc (test_aragatz_client.ValidationTests.test_all_preamble_fields_checked_even_with_recomputed_crc) ... ok
+test_atomic_no_clobber_and_explicit_overwrite (test_aragatz_client.ValidationTests.test_atomic_no_clobber_and_explicit_overwrite) ... ok
+test_bad_schedule_id_status_and_axi_busy (test_aragatz_client.ValidationTests.test_bad_schedule_id_status_and_axi_busy) ... ok
+test_c_firmware_header_and_payload_interoperate (test_aragatz_client.ValidationTests.test_c_firmware_header_and_payload_interoperate) ... ok
+test_capture_preflight_prevents_any_request (test_aragatz_client.ValidationTests.test_capture_preflight_prevents_any_request) ... ok
+test_fsync_failure_does_not_publish_file (test_aragatz_client.ValidationTests.test_fsync_failure_does_not_publish_file) ... ok
+test_header_exact_length (test_aragatz_client.ValidationTests.test_header_exact_length) ... ok
+test_header_rejects_unknown_results_states_and_oversize (test_aragatz_client.ValidationTests.test_header_rejects_unknown_results_states_and_oversize) ... ok
+test_header_rejects_unknown_version_and_size (test_aragatz_client.ValidationTests.test_header_rejects_unknown_version_and_size) ... ok
+test_parser_rejects_zero_repeat_and_nonfinite_timeout (test_aragatz_client.ValidationTests.test_parser_rejects_zero_repeat_and_nonfinite_timeout) ... ok
+test_preflight_rejects_aliasing_report_paths (test_aragatz_client.ValidationTests.test_preflight_rejects_aliasing_report_paths) ... ok
+test_rates_use_explicit_units (test_aragatz_client.ValidationTests.test_rates_use_explicit_units) ... ok
+test_requests_reject_overflow_invalid_arguments_and_out_of_envelope (test_aragatz_client.ValidationTests.test_requests_reject_overflow_invalid_arguments_and_out_of_envelope) ... ok
+test_saved_metadata_crc_is_rechecked (test_aragatz_client.ValidationTests.test_saved_metadata_crc_is_rechecked) ... ok
+test_timestamp_must_increase_across_fragments (test_aragatz_client.ValidationTests.test_timestamp_must_increase_across_fragments) ... ok
+
+----------------------------------------------------------------------
+Ran 37 tests in 0.297s
+
+OK
+PASS capture host contract: success
+PASS capture host contract: init_active
+PASS capture host contract: version
+PASS capture host contract: stale_end
+PASS capture host contract: readback
+PASS capture host contract: bad_end
+PASS capture host contract: missed_trigger
+PASS capture host contract: partial_stop
+PASS capture host contract: error_bit12
+PASS capture host contract: guard
+PASS capture host contract: timeout_abort
+PASS capture host contract: abort_after
+PASS capture host contract: restart_cache
+PASS capture host contract: restart_ready
+PASS capture host contract: tiny_timing
+15 host capture scenarios passed; no target hardware was exercised.
+SERVER HOST PASS: 404 checks (fragmentation, ERR_MEM, TCP/app ACK, retained replay, faults)
+PS host checks PASS. Vitis build, ARM cache, PL, PHY/link and Ethernet rate remain untested here.
+test_bad_section_tables_and_file_backed_section_size (test_memory_reservation.ELFReservationTests.test_bad_section_tables_and_file_backed_section_size) ... ok
+test_bad_symbol_table_shape_link_and_strings (test_memory_reservation.ELFReservationTests.test_bad_symbol_table_shape_link_and_strings) ... ok
+test_capture_boundary_markers_are_required_and_exact (test_memory_reservation.ELFReservationTests.test_capture_boundary_markers_are_required_and_exact) ... ok
+test_malformed_elf_headers_and_truncation (test_memory_reservation.ELFReservationTests.test_malformed_elf_headers_and_truncation) ... ok
+test_malformed_reservation_symbols (test_memory_reservation.ELFReservationTests.test_malformed_reservation_symbols) ... ok
+test_missing_and_ambiguous_reservation_symbol (test_memory_reservation.ELFReservationTests.test_missing_and_ambiguous_reservation_symbol) ... ok
+test_nobits_bss_heap_and_stack_overlap (test_memory_reservation.ELFReservationTests.test_nobits_bss_heap_and_stack_overlap) ... ok
+test_nobits_has_no_file_image_but_still_requires_address_bounds (test_memory_reservation.ELFReservationTests.test_nobits_has_no_file_image_but_still_requires_address_bounds) ... ok
+test_non_load_empty_or_invalid_segments_are_not_a_valid_check (test_memory_reservation.ELFReservationTests.test_non_load_empty_or_invalid_segments_are_not_a_valid_check) ... ok
+test_pt_load_checks_both_virtual_and_physical_addresses (test_memory_reservation.ELFReservationTests.test_pt_load_checks_both_virtual_and_physical_addresses) ... ok
+test_pt_load_zero_fill_tail_and_exclusive_boundary (test_memory_reservation.ELFReservationTests.test_pt_load_zero_fill_tail_and_exclusive_boundary) ... ok
+test_valid_arm_elf_and_empty_or_nonoverlapping_allocations (test_memory_reservation.ELFReservationTests.test_valid_arm_elf_and_empty_or_nonoverlapping_allocations) ... ok
+test_already_shorter_ddr_is_not_enlarged (test_memory_reservation.LinkerReservationTests.test_already_shorter_ddr_is_not_enlarged) ... ok
+test_ambiguous_duplicate_missing_and_out_of_range_regions (test_memory_reservation.LinkerReservationTests.test_ambiguous_duplicate_missing_and_out_of_range_regions) ... ok
+test_cli_does_not_overwrite_input_or_existing_output (test_memory_reservation.LinkerReservationTests.test_cli_does_not_overwrite_input_or_existing_output) ... ok
+test_comments_and_strings_cannot_define_phantom_regions (test_memory_reservation.LinkerReservationTests.test_comments_and_strings_cannot_define_phantom_regions) ... ok
+test_explicit_region_selection (test_memory_reservation.LinkerReservationTests.test_explicit_region_selection) ... ok
+test_expression_prefix_cannot_be_patched_as_a_literal (test_memory_reservation.LinkerReservationTests.test_expression_prefix_cannot_be_patched_as_a_literal) ... ok
+test_malformed_multiple_blocks_and_include_are_rejected (test_memory_reservation.LinkerReservationTests.test_malformed_multiple_blocks_and_include_are_rejected) ... ok
+test_overlap_and_exclusive_boundaries (test_memory_reservation.LinkerReservationTests.test_overlap_and_exclusive_boundaries) ... ok
+test_standard_vitis_region_and_other_safe_regions (test_memory_reservation.LinkerReservationTests.test_standard_vitis_region_and_other_safe_regions) ... ok
+test_supported_literal_forms_and_keyword_aliases (test_memory_reservation.LinkerReservationTests.test_supported_literal_forms_and_keyword_aliases) ... ok
+test_unrecognized_other_region_cannot_hide_capture_overlap (test_memory_reservation.LinkerReservationTests.test_unrecognized_other_region_cannot_hide_capture_overlap) ... ok
+
+----------------------------------------------------------------------
+Ran 23 tests in 0.084s
+
+OK
+MDIO budget mock: PASS (success, busy, stuck read/write, final poll)
+GEM recovery mock: PASS (initial failure, renegotiated speed, MDIO errors)
+KSZ9031 helper mock: PASS (10/100/1000, hotplug, timeout, errors, duplex)
+KSZ9031 discovery mock: PASS (32 addresses, absent/ambiguous/wrong PHY, MDIO error)
+HOST CHECKS PASS: no Vitis build, FPGA execution, PHY/link qualification or board speed measurement.
+PASS: main/platform/capture/server compile and partial link with real 2023.1 lwIP/Xilinx headers.
+BSP/SCU/GIC declarations used host shims. This is not a Vitis build or hardware test.
+PASS: server.c syntax/types against actual 2023.1 lwIP headers (host config only)

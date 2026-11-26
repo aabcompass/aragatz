@@ -1,25 +1,123 @@
-# Capture TCP v1 (reconstruction, not hardware validated)
+# Aragatz Capture TCP v1
 
-All protocol integers are unsigned 32-bit big-endian. Each request is eight words:
-magic 0x41524743 (ARGC), version 1, opcode, capture ID, frames, prev, fragments,
-CRC32 of the preceding 28 bytes. Opcodes START=1, FETCH=2, ACK=3, STATUS=4.
-START requires ID=0; ACK uses frames=payload length, prev=payload CRC, fragments=0.
-FETCH and STATUS unused parameters must be zero.
+Статус: программно проверяемый контракт; аппаратное подтверждение выполняется
+по [инструкции](../ps_sw/lwip_capture/README.md). Транспорт — TCP, один клиент,
+порт по умолчанию `5001`. Версия `1` в этой ветке означает **32 байта запроса
+и 64 байта заголовка ответа**. Старый экспериментальный формат с заголовком
+192 байта не используется. Приложение PS и клиент берутся из одного commit.
 
-Every reply is sixteen words: magic 0x4152475a (ARGZ), version=1, header bytes=64,
-result (0 OK, 1 invalid, 2 busy, 3 hardware fault, 4 not found), state
-(0 empty, 1 acquiring, 2 retained, 3 fault), capture ID, frames, prev, fragments,
-payload length, payload CRC, first trigger frame, trigger period, CAP status,
-CAP errors, header CRC32 over preceding 60 bytes.
-Only successful START/FETCH replies carry payload immediately after header.
-STATUS and ACK never carry payload (length describes retained capture).
-CRC32 is standard reflected IEEE (zlib.crc32). Payload is raw little-endian DDR.
+Все поля запросов и заголовков — `uint32`, big-endian. Сериализация явная:
+размещение C-структур не определяет формат. Payload — неизменённые байты DDR,
+содержащие little-endian слова.
 
-One connection, one outstanding request; close and reconnect after protocol
-or transport failure. A disconnected capture continues; use STATUS then FETCH
-with retained ID. ACK must match ID, length and CRC; only then can START reuse
-DDR. IDs are session-local (reset invalidates them). No authentication:
-use only an isolated trusted bench network.
+## Запрос: 32 байта
 
-This reconstructed protocol is intentionally 64 bytes, not the lost draft's
-192 bytes; clients and firmware must come from the same revision.
+| Смещение | Поле | Значение |
+|---:|---|---|
+| 0 | magic | `0x41524743`, ASCII `ARGC` |
+| 4 | version | `1` |
+| 8 | opcode | `START=1`, `FETCH=2`, `ACK=3`, `STATUS=4` |
+| 12 | capture_id | `0` для START/STATUS; выданный ID для FETCH/ACK |
+| 16 | arg0 | START: кадров во фрагменте; ACK: длина payload; иначе 0 |
+| 20 | arg1 | START: кадров предыстории; ACK: CRC32 payload; иначе 0 |
+| 24 | arg2 | START: число фрагментов; иначе 0 |
+| 28 | request_crc32 | CRC32 байтов `[0,28)` |
+
+START: `frames >= 2`, `0 <= prev <= 64`, `prev < frames`, `1 <= fragments <= 16`.
+Длина `(128 + frames * 768) * fragments` должна помещаться в резерв 1 МиБ
+с дополнительными 256 байтами защитной области. Умножения проверяются
+до приведения к 32 битам. Максимум 131072 кадров в регистре сам по себе
+не означает, что такой запрос помещается в выделенный буфер.
+
+## Ответ: заголовок 64 байта
+
+| Смещение | Поле | Значение |
+|---:|---|---|
+| 0 | magic | `0x4152475a`, ASCII `ARGZ` |
+| 4 | version | `1` |
+| 8 | header_bytes | `64` |
+| 12 | result | 0 OK; 1 INVALID; 2 BUSY; 3 HWFAULT; 4 NOTFOUND |
+| 16 | state | 0 EMPTY; 1 ACQUIRING; 2 RETAINED; 3 FAULT |
+| 20 | capture_id | ID текущего/последнего захвата |
+| 24 | frames | Число кадров во фрагменте |
+| 28 | prev | Предыстория в кадрах |
+| 32 | fragments | Число фрагментов |
+| 36 | size | Длина сохранённого payload в байтах |
+| 40 | payload_crc | CRC32 всего payload |
+| 44 | first_trigger | `128` для текущего COUNTER-сценария |
+| 48 | period | `max(512, frames + 128)` кадров |
+| 52 | cap_status | Снимок `CAP_STATUS` |
+| 56 | cap_errors | Снимок `CAP_ERRORS` |
+| 60 | header_crc | CRC32 байтов `[0,60)` |
+
+**Payload идёт только за успешным ответом START или FETCH.** Ответ STATUS
+может сообщать ненулевой `size`, но данных за ним нет. У ACK и всех ошибок
+payload также отсутствует. Заголовок не содержит opcode: клиент знает тип
+ответа по своему запросу. Штатный клиент держит один запрос в работе.
+
+CRC32 — CRC-32/ISO-HDLC (reflected IEEE): полином `0xEDB88320`, начальное
+состояние и финальный XOR `0xffffffff`. Совместим с
+`zlib.crc32(data) & 0xffffffff`; строка `123456789` даёт `0xcbf43926`.
+
+## Владение буфером
+
+START принимается только в EMPTY, при разрешённом захвате и проверенном
+full-duplex link. Подготовка DDR, ожидание Capture END, остановка генератора,
+invalidate и CRC относятся к ACQUIRING. Успешный ответ формируется после
+завершения этих действий. END проверяется вместе с отсутствием незавершённых
+AXI-транзакций, счётчиками, длинами, адресами и защитной областью.
+
+В RETAINED буфер остаётся неизменным. FETCH повторяет тот же захват без
+нового START. Новый START отклоняется, пока ПК не подтвердит результат.
+Обрыв TCP освобождает только соединение: начатый захват продолжается,
+готовый буфер сохраняется. На новом соединении сначала STATUS, затем FETCH.
+
+ACK принимается после передачи всего payload и TCP-подтверждения
+его байтов в **том же соединении**, при совпадении ID, длины и CRC.
+Клиент отправляет ACK после проверки CRC, всех слов COUNTER, сохранения
+и повторного чтения файла. Успешный ACK переводит состояние в EMPTY
+и освобождает метаданные; FETCH этого ID после ACK уже не работает.
+Это разрешение повторного использования DDR, а не новая аппаратная команда.
+
+При ошибке проверки клиент не отправляет ACK. При потере ответа на ACK
+он не знает, был ли буфер освобождён: надо запросить STATUS.
+EMPTY означает, что подтверждение могло быть принято; локальный файл
+проверяется независимо. RETAINED позволяет повторить FETCH и проверку.
+
+ID — ненулевой 32-битный счётчик текущего запуска PS. Reset приложения
+делает старые ID недействительными; уникальности между запусками нет.
+FAULT остаётся зафиксированным: сначала диагностика UART/регистров,
+затем согласованный reset/reprogram; клиент не очищает аппаратные ошибки.
+
+## COUNTER payload
+
+Фрагмент содержит 128 байт преамбулы и `frames * 768` байт кадров.
+Преамбула как 16 little-endian `uint64`:
+
+| Слово | Содержимое |
+|---:|---|
+| 0 | `(fragment_index << 32) \| 0xc0dec035`, нумерация с 0 |
+| 1 | Timestamp PL; строго возрастает между фрагментами |
+| 2 | `(0x54524752 << 32) \| trigger_frame` (`TRGR`) |
+| 3 | `(0x55667788 << 32) \| 0x11223344` |
+| 4–6 | 0 |
+| 7–15 | `0x1234567812345678` |
+
+Для фрагмента `k`, `trigger_frame = 128 + k * period`. Первый сохранённый
+кадр имеет номер `trigger_frame - prev`. В каждом кадре 96 слов:
+`(frame_index << 32) | word_index`, `word_index = 0..95`. Проверяются все
+преамбулы и все слова; CRC в одиночку не подтверждает рисунок генератора.
+Между фрагментами допустимы предусмотренные расписанием пропуски кадров;
+пропущенные триггеры в данном сценарии считаются ошибкой.
+
+## Границы протокола
+
+TCP — поток: запрос/ответ могут быть разбиты или объединены в сегменты.
+Таймаут, EOF и ошибка CRC не означают границу нового сообщения;
+после ошибки клиент закрывает соединение. Размер проверяется
+до выделения памяти и приёма payload. Аутентификации и шифрования здесь нет:
+это протокол доверенного лабораторного стенда.
+
+Непрерывный захват, zero-copy, другой генератор или расширенные метаданные
+потребуют отдельного согласованного контракта. Текущая версия выгружает
+конечный завершённый захват.
