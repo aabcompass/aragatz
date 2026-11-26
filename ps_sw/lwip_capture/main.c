@@ -348,7 +348,7 @@ int main(void)
     struct tcp_pcb *p,*listener;
     init_platform();
     lwip_init();
-    IP4_ADDR(&ip,ARAGATZ_IP);
+    IP4_ADDR(&ip,ARAGATZ_IP_A,ARAGATZ_IP_B,ARAGATZ_IP_C,ARAGATZ_IP_D);
     IP4_ADDR(&mask,255,255,255,0);
     IP4_ADDR(&gw,0,0,0,0);
     if(!xemac_add(&netif0,&ip,&mask,&gw,mac,PLATFORM_EMAC_BASEADDR)) {
